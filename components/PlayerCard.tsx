@@ -21,7 +21,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({ player, isWangYue = false }) =>
           <User size={16} className={isWangYue ? 'text-indigo-400' : 'text-slate-400'} />
           <span className={`font-bold ${isWangYue ? 'text-indigo-100' : 'text-slate-200'}`}>{player.name}</span>
         </div>
-        <span className="text-xs font-mono text-slate-500">{player.role}</span>
+        {player.role && <span className="text-xs font-mono text-slate-500">{player.role}</span>}
       </div>
       
       <div className="grid grid-cols-2 gap-2 text-sm">

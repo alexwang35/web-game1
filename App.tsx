@@ -7,7 +7,7 @@ import { Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(INITIAL_STATE);
-  const [gameConfig] = useState<GameConfig>(INITIAL_CONFIG);
+  const [gameConfig, setGameConfig] = useState<GameConfig>(INITIAL_CONFIG);
   const [engineOutput, setEngineOutput] = useState<EngineOutput | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [hasStarted, setHasStarted] = useState<boolean>(false);
@@ -17,18 +17,17 @@ const App: React.FC = () => {
   useEffect(() => {
     const checkApiKey = async () => {
       // Logic for AI Studio embedded environment
-      const aistudio = (window as any).aistudio;
-      if (aistudio) {
-        const hasKey = await aistudio.hasSelectedApiKey();
-        if (!hasKey) {
-          // If no key selected, force selection before starting
-          try {
-            await aistudio.openSelectKey();
-            // Assume success after dialog close, or user will re-trigger
-          } catch (e) {
-            console.error("Key selection failed/cancelled", e);
-            setError("需要选择 API Key 才能开始游戏。");
+      const win = window as any;
+      if (win.aistudio) {
+        try {
+          const hasKey = await win.aistudio.hasSelectedApiKey();
+          if (!hasKey) {
+            // If no key selected, force selection before starting
+            await win.aistudio.openSelectKey();
           }
+        } catch (e) {
+          console.error("Key selection failed/cancelled", e);
+          setError("需要选择 API Key 才能开始游戏。");
         }
       }
     };
@@ -39,12 +38,7 @@ const App: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      // Important: Create a new GenAI instance or ensure the existing one picks up the key
-      // The service layer handles environment variable access.
-      // In the AI Studio iframe context, the env var is injected after selection.
-      
       const response = await generateNextTurn(gameState, gameConfig, action);
-      
       setEngineOutput(response);
       setGameState(response.state);
     } catch (err: any) {

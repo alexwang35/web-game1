@@ -1,8 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { EngineOutput } from '../types';
 import PlayerCard from './PlayerCard';
-import { Thermometer, HeartPulse, Trophy, Box, AlertTriangle, Zap } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { Thermometer, HeartPulse, Trophy, Box, AlertTriangle, Zap, Moon, Sun, Flag } from 'lucide-react';
 
 interface GameUIProps {
   engineOutput: EngineOutput;
@@ -22,7 +21,10 @@ const GameUI: React.FC<GameUIProps> = ({ engineOutput, onOptionSelect, loading }
     scrollToBottom();
   }, [scene]);
 
-  const scoreDiff = visible_state.score_us - visible_state.score_enemy;
+  // Use explicit checks to avoid potential parser issues with optional chaining in const decls
+  const metaPhase = state && state.meta ? state.meta.phase : 'night_before';
+  const isMatchPhase = metaPhase === 'match_play';
+  const isNightPhase = metaPhase === 'night_before';
 
   return (
     <div className="w-full max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-2rem)]">
@@ -30,21 +32,33 @@ const GameUI: React.FC<GameUIProps> = ({ engineOutput, onOptionSelect, loading }
       {/* LEFT COLUMN: Narrative & Context */}
       <div className="lg:col-span-7 flex flex-col gap-6 h-full overflow-hidden">
         
-        {/* Scoreboard Header */}
+        {/* Scoreboard / Phase Header */}
         <div className="bg-slate-900 rounded-xl p-4 border border-slate-700 shadow-lg flex justify-between items-center shrink-0">
-          <div className="flex flex-col items-center">
-             <span className="text-xs text-slate-400 uppercase tracking-widest">海宁 (我方)</span>
-             <span className="text-4xl font-mono font-bold text-emerald-400">{visible_state.score_us}</span>
-          </div>
-          <div className="flex flex-col items-center gap-1">
-            <span className="text-xs font-mono text-slate-500">TURN {state.turn}</span>
-            <div className="h-px w-12 bg-slate-700"></div>
-            <span className="text-xs font-mono text-slate-500">VS</span>
-          </div>
-          <div className="flex flex-col items-center">
-             <span className="text-xs text-slate-400 uppercase tracking-widest">Hawksoar (敌方)</span>
-             <span className="text-4xl font-mono font-bold text-rose-500">{visible_state.score_enemy}</span>
-          </div>
+          {isMatchPhase ? (
+            <>
+              <div className="flex flex-col items-center">
+                 <span className="text-xs text-slate-400 uppercase tracking-widest">海宁 (我方)</span>
+                 <span className="text-4xl font-mono font-bold text-emerald-400">{state.match.our_score}</span>
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-xs font-mono text-slate-500">TURN {state.meta.turn}</span>
+                <div className="h-px w-12 bg-slate-700"></div>
+                <span className="text-xs font-mono text-slate-500">VS</span>
+              </div>
+              <div className="flex flex-col items-center">
+                 <span className="text-xs text-slate-400 uppercase tracking-widest">Hawksoar (敌方)</span>
+                 <span className="text-4xl font-mono font-bold text-rose-500">{state.match.opp_score}</span>
+              </div>
+            </>
+          ) : (
+             <div className="w-full flex items-center justify-between text-slate-300">
+                <div className="flex items-center gap-2">
+                   {isNightPhase ? <Moon size={20} className="text-indigo-400" /> : <Sun size={20} className="text-amber-400" />}
+                   <span className="font-bold tracking-wide uppercase">{isNightPhase ? "前夜 (The Night Before)" : "赛前 (Pre-Match)"}</span>
+                </div>
+                <span className="text-xs font-mono text-slate-500">TURN {state.meta.turn}</span>
+             </div>
+          )}
         </div>
 
         {/* Narrative Box */}
@@ -54,7 +68,7 @@ const GameUI: React.FC<GameUIProps> = ({ engineOutput, onOptionSelect, loading }
            <div className="space-y-6">
              {/* Objective */}
              <div className="flex items-start gap-3 bg-indigo-950/30 p-3 rounded border border-indigo-500/20">
-                <Trophy className="text-indigo-400 shrink-0 mt-1" size={18} />
+                <Flag className="text-indigo-400 shrink-0 mt-1" size={18} />
                 <div>
                   <h4 className="text-xs font-bold text-indigo-300 uppercase mb-1">当前目标</h4>
                   <p className="text-sm text-indigo-100">{objective}</p>
@@ -109,7 +123,7 @@ const GameUI: React.FC<GameUIProps> = ({ engineOutput, onOptionSelect, loading }
                 <Thermometer size={18} className={visible_state.temperature > 37.5 ? 'text-red-500' : 'text-emerald-500'} />
                 <span className="text-xs uppercase">体温</span>
               </div>
-              <span className={`text-2xl font-mono font-bold ${visible_state.temperature > 38 ? 'text-red-400' : 'text-slate-100'}`}>
+              <span className={`text-2xl font-mono font-bold ${visible_state.temperature > 37 ? 'text-red-400' : 'text-slate-100'}`}>
                 {visible_state.temperature.toFixed(1)}°C
               </span>
               {visible_state.temperature > 38 && <span className="text-xs text-red-500 animate-pulse">高烧警告</span>}
@@ -140,7 +154,7 @@ const GameUI: React.FC<GameUIProps> = ({ engineOutput, onOptionSelect, loading }
               {visible_state.inventory.map((item, idx) => (
                 <div key={idx} className="bg-slate-800 px-2 py-1 rounded border border-slate-700 text-xs text-amber-200 flex items-center gap-1" title={item.effect_desc}>
                   <Box size={12} />
-                  {item.name} x{item.count}
+                  {item.name} {item.count ? `x${item.count}` : ''}
                 </div>
               ))}
               {visible_state.inventory.length === 0 && <span className="text-xs text-slate-600 italic">空</span>}
@@ -148,47 +162,54 @@ const GameUI: React.FC<GameUIProps> = ({ engineOutput, onOptionSelect, loading }
           </div>
         </div>
 
-        {/* Tactical Analysis (Lineup Module) */}
-        <div className="bg-slate-900 rounded-xl p-5 border border-slate-700 shadow-lg flex-grow">
-           <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 border-b border-slate-800 pb-2">场上局势</h3>
-           
-           <div className="mb-6 flex items-center justify-between bg-slate-950 p-4 rounded-lg border border-slate-800">
-             <div className="text-center">
-               <div className="text-xs text-slate-500 mb-1">本回合达标分</div>
-               <div className="text-2xl font-mono font-bold text-indigo-400">{lineup_module.required_score}</div>
-             </div>
-             <div className="text-slate-700 font-mono">VS</div>
-             <div className="text-center">
-               <div className="text-xs text-slate-500 mb-1">队伍总潜力</div>
-               <div className={`text-2xl font-mono font-bold ${lineup_module.team_score >= lineup_module.required_score ? 'text-emerald-400' : 'text-red-400'}`}>
-                 {lineup_module.team_score}
+        {/* Tactical Analysis (Lineup Module) - Only Visible in Match Phase */}
+        {isMatchPhase && lineup_module ? (
+          <div className="bg-slate-900 rounded-xl p-5 border border-slate-700 shadow-lg flex-grow">
+             <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 border-b border-slate-800 pb-2">场上局势</h3>
+             
+             <div className="mb-6 flex items-center justify-between bg-slate-950 p-4 rounded-lg border border-slate-800">
+               <div className="text-center">
+                 <div className="text-xs text-slate-500 mb-1">本回合达标分</div>
+                 <div className="text-2xl font-mono font-bold text-indigo-400">{lineup_module.required_score}</div>
+               </div>
+               <div className="text-slate-700 font-mono">VS</div>
+               <div className="text-center">
+                 <div className="text-xs text-slate-500 mb-1">队伍总潜力</div>
+                 <div className={`text-2xl font-mono font-bold ${lineup_module.team_score >= lineup_module.required_score ? 'text-emerald-400' : 'text-red-400'}`}>
+                   {lineup_module.team_score}
+                 </div>
                </div>
              </div>
-           </div>
 
-           {lineup_module.synergy_applied && (
-             <div className={`mb-6 p-3 rounded border ${lineup_module.is_fallback ? 'bg-amber-900/20 border-amber-500/30' : 'bg-indigo-900/20 border-indigo-500/30'}`}>
-                <div className="flex items-center gap-2 mb-1">
-                  <Zap size={14} className={lineup_module.is_fallback ? 'text-amber-400' : 'text-indigo-400'} />
-                  <span className={`text-xs font-bold uppercase ${lineup_module.is_fallback ? 'text-amber-300' : 'text-indigo-300'}`}>
-                    {lineup_module.is_fallback ? '羁绊保底触发' : '羁绊已激活'}
-                  </span>
-                </div>
-                <div className="text-sm text-slate-200 font-medium">
-                  {lineup_module.synergy_applied}
-                </div>
-             </div>
-           )}
+             {lineup_module.synergy_applied && (
+               <div className={`mb-6 p-3 rounded border ${lineup_module.is_fallback ? 'bg-amber-900/20 border-amber-500/30' : 'bg-indigo-900/20 border-indigo-500/30'}`}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <Zap size={14} className={lineup_module.is_fallback ? 'text-amber-400' : 'text-indigo-400'} />
+                    <span className={`text-xs font-bold uppercase ${lineup_module.is_fallback ? 'text-amber-300' : 'text-indigo-300'}`}>
+                      {lineup_module.is_fallback ? '羁绊保底触发' : '羁绊已激活'}
+                    </span>
+                  </div>
+                  <div className="text-sm text-slate-200 font-medium">
+                    {lineup_module.synergy_applied}
+                  </div>
+               </div>
+             )}
 
-           <div className="space-y-2">
-             <h4 className="text-xs text-slate-500 uppercase mb-2">阵容状态</h4>
-             <div className="grid grid-cols-1 gap-2">
-               {state.players.map(p => (
-                 <PlayerCard key={p.id} player={p} isWangYue={p.id === 'wang_yue'} />
-               ))}
+             <div className="space-y-2">
+               <h4 className="text-xs text-slate-500 uppercase mb-2">场上球员状态</h4>
+               <div className="grid grid-cols-1 gap-2">
+                  {state.roster.players.slice(0, 5).map(p => (
+                   <PlayerCard key={p.name} player={p} isWangYue={p.name === '王越'} />
+                 ))}
+                 <div className="text-center text-xs text-slate-600 italic mt-2">... (更多替补)</div>
+               </div>
              </div>
+          </div>
+        ) : (
+           <div className="bg-slate-900/50 rounded-xl p-5 border border-slate-800 flex items-center justify-center h-48">
+              <span className="text-slate-500 text-sm italic">非比赛阶段，暂无战术数据</span>
            </div>
-        </div>
+        )}
 
       </div>
     </div>

@@ -36,120 +36,99 @@ export const DEVELOPER_PROMPT = `
 【输入结构】
 ────────────────
 每回合，用户提供两个 JSON 对象：
-1) state: 当前游戏状态（比分、球员体力、已触发羁绊、物品、回合数等）
-2) config: 配置参数（球员属性、体力规则、羁绊表、阈值曲线、保底机制等）
+1) state: 当前游戏状态（包含 meta, visible_state, match, roster 等）
+2) config: 配置参数（包含 threshold_curve, stamina_tiers, players, synergies 等）
 
 你必须：
 - 仅基于 config 和 state 进行计算。
 - 如果 config 字段缺失，使用合理的默认值并在 system.message 中注明。
 
 ────────────────
+【阶段规则 (PHASE RULES)】
+────────────────
+- 若 state.meta.phase 为 "night_before" 或 "matchday_pre"：
+  - 这只是剧情/RPG 阶段。
+  - options 必须为对话或行动选择。
+  - **不得**要求玩家选择阵容 (Lineup)。
+  - **不得**进行比赛得分计算。
+  - lineup_module 在输出中应为空或 null。
+  
+- 若 state.meta.phase 切换到 "match_play"：
+  - 进入正式比赛逻辑。
+  - options 包含阵容调整、战术选择。
+  - 必须输出 lineup_module 并进行得分判定。
+
+────────────────
 【UI 可见性规则（必须遵守）】
 ────────────────
-【HUD（玩家可见）仅包含】
-- 王越 体温 (temperature)
-- 王越 自身体力 (self_stamina)
-- 背包 (inventory 物品列表)
+【HUD（玩家可见）】
+- 王越 体温 (state.visible_state.temperature)
+- 王越 自身体力 (state.visible_state.self_stamina)
+- 背包 (state.visible_state.inventory)
 
-【阵容选择模块（半可见）显示】
-- 每位球员的基础评分 (base_score)
-- 每位球员的体力 (stamina)
-- 当前回合达标分 (required_score)
-- 当前回合队伍总分 (team_score)
-- 当前回合生效的羁绊 (synergy_applied)
+【阵容选择模块（半可见）- 仅在 match_play 阶段】
+- 球员基础评分 (base_score)
+- 球员体力 (stamina)
+- 达标分 (required_score)
+- 队伍总分 (team_score)
+- 生效羁绊
 
 **禁止**在任何地方显示：
-- 隐藏剧情变量
-- 剩余羁绊池
-- 内部概率或判定公式
+- 隐藏剧情变量 (story_flags_hidden)
+- 羁绊内部逻辑
 
 ────────────────
-【比赛结构】
+【比赛结构 (match_play)】
 ────────────────
 - 比赛为回合制，逐分结算。
 - 每一分（Point）= 一次“阵容属性结算”。
-- 双方总比分决定当前回合的“得分阈值”。
+- 根据 state.match.total_points 和 config.threshold_curve 确定当前 required_score。
 
 ────────────────
 【阈值系统】
 ────────────────
 - 使用 config.threshold_curve
-- 默认 3 个阶段：
-  - 总比分 0–7 → 达标分 = 35
-  - 总比分 8–13 → 达标分 = 40
-  - 总比分 ≥14 → 达标分 = 45
+- 结构: { "max_total_points_exclusive": 8, "required_score": 35 }
+- 含义: 若当前总分 < max_total_points_exclusive，则使用该 required_score。按顺序匹配。
 
 ────────────────
 【有效评分计算 (Effective Score)】
 ────────────────
 对于场上每位球员：
+- T1, T2 读取自 config.stamina_tiers
 - 体力 ≥ T1 → 有效分 = 基础分
 - T2 ≤ 体力 < T1 → 有效分 = 基础分 - 1
 - 体力 < T2 → 有效分 = 基础分 - 2
-- 有效分最低为 1
-
-T1, T2 读取自 config.stamina_tiers（默认 T1=60, T2=30）
+- 有效分最低根据 config.scoring_rules.min_effective_score (默认 1)
 
 ────────────────
 【队伍总分计算 (Team Score)】
 ────────────────
-team_score = Σ(场上球员有效分) + 羁绊加成 (synergy_bonus_applied)
-
-如果 team_score ≥ required_score → 我方本回合得 1 分。
-否则，不得分（敌方得 1 分）。
-
-**旁白必须根据得分结果进行描述。**
+team_score = Σ(场上球员有效分) + 羁绊加成
+若 team_score ≥ required_score → 我方得 1 分 (state.match.our_score +1)。
+否则，敌方得 1 分 (state.match.opp_score +1)。
 
 ────────────────
 【羁绊系统 (Synergy)】
 ────────────────
-- 每回合最多触发 1 个羁绊。
-- 羁绊分数加在“队伍总分”上，而非个人。
+- 每回合最多触发 config.scoring_rules.synergy_per_turn_limit 次。
 - 数据来源 config.synergies。
-
-【触发优先级】
-1. 在当前阵容满足的羁绊中，优先触发“加分最高且未触发过”的羁绊。
-2. 如果没有满足的未触发羁绊，进入“保底触发机制”。
-
-────────────────
-【保底触发机制 (Secondary Trigger Pity)】
-────────────────
-- 条件：
-  - 当前阵容满足某些羁绊。
-  - 这些羁绊本场比赛都已触发过。
-  - config.synergy_fallback.enabled = true
-  - 比赛保底使用次数 < config.synergy_fallback.max_uses
-
-- 效果：
-  - 选择满足条件的“已触发羁绊”中分数最高的一个。
-  - 加成乘以系数（默认 0.5），向下取整。
-  - 标记为“保底触发” (is_fallback = true)。
-
-- 限制：
-  - 每场比赛最多触发 max_uses 次（默认 1 次）。
+- 检查 `requires` 列表中的球员是否都在场。
+- 优先触发分数最高且未使用的羁绊。
+- 若所有满足条件的羁绊都已使用，且 config.synergy_fallback.enabled 为真，且 state.synergy_tracker.fallback_used_count < max_uses，则触发保底（分数 * multiplier）。
 
 ────────────────
 【体力与体温结算】
 ────────────────
-- 每回合结束后，根据 上场/休息 更新球员体力。
-- 使用 config.players 定义消耗/恢复值。
-
-【王越特殊规则】
-- 如果带有 "cold" (感冒) buff：
-  - 上场：self_stamina -30, temperature +2
-  - 休息：体力无法恢复。
-- 如果 "cold" buff 被移除：
-  - 上场：self_stamina -10
-  - 休息：self_stamina +5
-  - temperature 恒定为 36.5
-
-Buff 移除和物品效果严格遵循 config.items。
+- 每回合结束后，根据 config.players 定义消耗/恢复值。
+- 王越的体力/体温变化受 config.wangyue_special 和 status_effects 影响。
+- 处理物品效果 (state.visible_state.inventory)。
 
 ────────────────
 【输出要求 (强制)】
 ────────────────
 每回合必须输出包含以下字段的有效 JSON：
-scene (场景描述), objective (当前目标), visible_state, lineup_module, options (选项), system, state
+scene, objective, visible_state, lineup_module (仅 match_play), options, system, state
 `;
 
 export const USER_PROMPT_TEMPLATE = `
@@ -167,53 +146,169 @@ export const USER_PROMPT_TEMPLATE = `
 要求：
 1. 用简体中文描述当前场景（≤200字，写实比赛风格与心理描写）。
 2. 给出当前阶段的目标（objective）。
-3. 计算并展示本回合的 达标分 (required_score) 和 队伍总分 (team_score)。
-4. 如果触发羁绊，显示 synergy_applied（注明是否为保底触发）。
-5. 提供 2–4 个可选行动（options），包含阵容调整、物品使用或战术抉择。
+3. 如果是比赛阶段 (match_play)，计算并展示 required_score 和 team_score。如果是剧情阶段，忽略此项。
+4. 如果触发羁绊，显示 synergy_applied。
+5. 提供 2–4 个可选行动。
 6. 更新并返回新的 state。
-7. 除非满足规则条件，不要提前宣布结局。
+7. 严格遵守 Phase Rules。
 
 严格只输出 JSON。
 `;
 
 export const INITIAL_CONFIG: GameConfig = {
+  game: {
+    target_final_score: { us: 10, them: 9 },
+    phases: ["night_before", "matchday_pre", "match_play"],
+    max_options_per_turn: 4
+  },
+
   threshold_curve: [
-    { range: [0, 7], required: 35 },
-    { range: [8, 13], required: 40 },
-    { range: [14, 99], required: 45 },
+    { max_total_points_exclusive: 8, required_score: 35 },
+    { max_total_points_exclusive: 14, required_score: 40 },
+    { max_total_points_exclusive: 999, required_score: 45 }
   ],
-  stamina_tiers: { t1: 60, t2: 30 },
+
+  stamina_tiers: { T1: 60, T2: 30 },
+
+  scoring_rules: {
+    scheme: "B",
+    min_effective_score: 1,
+    synergy_apply_mode: "team_total_only",
+    synergy_per_turn_limit: 1,
+    synergy_choose_rule: "highest_untriggered_else_fallback"
+  },
+
+  synergy_fallback: {
+    enabled: true,
+    multiplier: 0.5,
+    max_uses: 1
+  },
+
+  players: {
+    "__default__": { base_score: 6, stamina_init: 100, on_field_cost: 20, rest_gain: 5 },
+
+    "王越": { base_score: 10, stamina_init: 100, on_field_cost: 30, rest_gain: 0 },
+    "李玥燊": { base_score: 8, stamina_init: 100, on_field_cost: 10, rest_gain: 5 },
+    "林子超": { base_score: 9, stamina_init: 100, on_field_cost: 10, rest_gain: 5 },
+    "刘恒宇": { base_score: 5, stamina_init: 100, on_field_cost: 20, rest_gain: 5 },
+    "冯一郎": { base_score: 6, stamina_init: 100, on_field_cost: 10, rest_gain: 5 },
+    "乔天同": { base_score: 6, stamina_init: 100, on_field_cost: 20, rest_gain: 5 }
+  },
+
   synergies: [
-    { id: "twin_towers", name: "双塔战术", condition_desc: "场上两名球员身高 > 185cm", bonus: 5, triggered: false },
-    { id: "speed_rush", name: "极速冲击", condition_desc: "三名速度型球员在场", bonus: 8, triggered: false },
-    { id: "haining_spirit", name: "海宁之魂", condition_desc: "王越带队上场", bonus: 10, triggered: false }
+    { id: "LQ15", name: "刘恒宇×乔天同 默契爆发", points: 15, requires: ["刘恒宇", "乔天同"], once_per_match: true },
+    { id: "LL5", name: "李玥燊×林子超 双核联动", points: 5, requires: ["李玥燊", "林子超"], once_per_match: false },
+    { id: "LF4", name: "李玥燊×冯一郎 稳定传导", points: 4, requires: ["李玥燊", "冯一郎"], once_per_match: false },
+    { id: "CF5", name: "林子超×冯一郎 防守协作", points: 5, requires: ["林子超", "冯一郎"], once_per_match: false },
+    { id: "LY3", "name": "刘恒宇×李玥燊 中场衔接", points: 3, requires: ["刘恒宇", "李玥燊"], once_per_match: false },
+    { id: "LF5", "name": "刘恒宇×冯一郎 快攻转换", points: 5, requires: ["刘恒宇", "冯一郎"], once_per_match: false }
   ],
-  synergy_fallback: { enabled: true, max_uses: 2, multiplier: 0.5 },
-  items: [
-    { id: "cold_medicine", name: "感冒药", count: 1, effect_desc: "移除感冒状态，稳定体温。" },
-    { id: "energy_gel", name: "能量胶", count: 2, effect_desc: "为王越恢复 30 点体力。" }
-  ],
-  players_metadata: []
+
+  wangyue_special: {
+    auto_win_condition: { self_stamina_gt: 80, temperature_lt: 37.0 },
+    cold_mode: { on_field_self_stamina_cost: 30, temperature_increase_per_field: 2, rest_gain: 0 },
+    healthy_mode: { on_field_self_stamina_cost: 10, rest_gain: 5, temperature_lock: 35.0 }
+  },
+
+  items: {
+    vodka: {
+      id: "vodka",
+      name: "小瓶vodka",
+      effect: "lower_temperature",
+      lower_temperature_amount: 2.0,
+      duration_turns: 3,
+      repeatable: false
+    },
+    toilet_pass: {
+      id: "toilet_pass",
+      name: "厕所通行卡",
+      effect: "pause_temperature_increase",
+      duration_turns: 1,
+      rebound_next_turn_double_increase: true
+    },
+    cold_medicine: {
+      id: "cold_medicine",
+      name: "感冒药",
+      effect: "remove_cold_buff_requires_choice",
+      requires_water_choice: true,
+      combo_with_vodka_required: true,
+      after_turns: 2,
+      result: "remove_cold_buff_and_lock_temp_35_and_change_stamina_rules"
+    }
+  }
 };
 
 export const INITIAL_STATE: GameState = {
-  turn: 1,
-  score_us: 0,
-  score_enemy: 0,
-  self_stamina: 80,
-  temperature: 38.5,
-  active_buffs: ["cold"],
-  players: [
-    { id: "wang_yue", name: "王越", base_score: 12, stamina: 80, role: "控盘 (Handler)" },
-    { id: "chen_speed", name: "陈速", base_score: 10, stamina: 100, role: "切入 (Cutter)" },
-    { id: "zhang_tall", name: "张高", base_score: 11, stamina: 100, role: "深位 (Deep)" },
-    { id: "li_defense", name: "李防", base_score: 9, stamina: 100, role: "防守 (D-Line)" },
-    { id: "zhao_rookie", name: "赵新", base_score: 6, stamina: 90, role: "新人 (Rookie)" }
+  meta: {
+    phase: "night_before",
+    turn: 0,
+    checkpoint_id: "CP0_NIGHT_START",
+    notes: "比赛日前夜：对话与关键前置条件阶段"
+  },
+
+  visible_state: {
+    temperature: 36.6,
+    self_stamina: 100,
+    inventory: []
+  },
+
+  match: {
+    our_score: 0,
+    opp_score: 0,
+    total_points: 0,
+    required_score: 35,
+    last_team_score: null,
+    last_synergy_applied: null
+  },
+
+  roster: {
+    players: [
+      { name: "王越", stamina: 100, base_score: 10, available: true, role: "队长" },
+      { name: "李玥燊", stamina: 100, base_score: 8, available: true, role: "主力" },
+      { name: "林子超", stamina: 100, base_score: 9, available: true, role: "主力" },
+      { name: "刘恒宇", stamina: 100, base_score: 5, available: true, role: "辅助" },
+      { name: "冯一郎", stamina: 100, base_score: 6, available: true, role: "辅助" },
+      { name: "乔天同", stamina: 100, base_score: 6, available: true, role: "辅助" },
+      { name: "队员A", stamina: 100, base_score: 6, available: true, role: "替补" },
+      { name: "队员B", stamina: 100, base_score: 6, available: true, role: "替补" }
+    ]
+  },
+
+  lineup: {
+    selected: [],
+    locked: false
+  },
+
+  status_effects: {
+    wangyue: {
+      cold_buff_active: true,
+      cold_buff_removed: false,
+      vodka_active_rounds_left: 0,
+      toilet_pause_active_rounds_left: 0,
+      toilet_rebound_pending: false
+    }
+  },
+
+  synergy_tracker: {
+    used_synergy_ids: [],
+    fallback_used_count: 0
+  },
+
+  story_flags_hidden: {
+    feng_joined: false,
+    liu_qiao_trust_built: false,
+    feng_carries_medicine: false,
+    true_ending_eligible: false
+  },
+
+  checkpoints: [
+    {
+      id: "CP0_NIGHT_START",
+      label: "比赛日前夜·起点",
+      phase: "night_before",
+      turn: 0
+    }
   ],
-  inventory: [
-    { id: "cold_medicine", name: "感冒药", count: 1, effect_desc: "移除感冒状态。" },
-    { id: "energy_gel", name: "能量胶", count: 1, effect_desc: "恢复 30 点体力。" }
-  ],
-  triggered_synergies: [],
+  
   history: []
 };
